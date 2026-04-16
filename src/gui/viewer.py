@@ -1,20 +1,21 @@
 # src/gui/viewer.py
-"""Custom image viewer widget using matplotlib"""
+"""Custom image viewer widget using matplotlib with drag/drop support"""
 from PyQt6.QtWidgets import QWidget, QVBoxLayout
-from PyQt6.QtCore import pyqtSignal
-from PyQt6.QtGui import QImage, QPixmap
+from PyQt6.QtCore import pyqtSignal, Qt
+from PyQt6.QtGui import QDragEnterEvent, QDropEvent
 
 import numpy as np
-import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-from matplotlib.colors import Normalize, ListedColormap
+from matplotlib.colors import ListedColormap
 
 
 class ImageViewer(QWidget):
-    """Image viewer with overlay capability"""
+    """Image viewer with overlay capability and drag/drop support"""
     
+    # Define signals at class level (IMPORTANT!)
     mouse_clicked = pyqtSignal(int, int)  # x, y coordinates
+    image_dropped = pyqtSignal(str)  # file path
     
     def __init__(self):
         super().__init__()
@@ -37,12 +38,55 @@ class ImageViewer(QWidget):
         
         # Connect mouse events
         self.canvas.mpl_connect('button_press_event', self.on_click)
+        
+        # Enable drag and drop
+        self.setAcceptDrops(True)
+    
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        """Handle drag enter - show visual feedback"""
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            for url in urls:
+                file_path = url.toLocalFile()
+                if file_path.endswith(('.nii', '.nii.gz')):
+                    event.acceptProposedAction()
+                    # Visual feedback
+                    self.setStyleSheet(
+                        "background-color: #e3f2fd; "
+                        "border: 3px dashed #2196F3; "
+                        "border-radius: 5px;"
+                    )
+                    return
+        
+        event.ignore()
+    
+    def dragLeaveEvent(self, event):
+        """Handle drag leave - reset background"""
+        self.setStyleSheet("")
+    
+    def dropEvent(self, event: QDropEvent):
+        """Handle drop - emit signal with file path"""
+        self.setStyleSheet("")  # Reset background
+        
+        if event.mimeData().hasUrls():
+            urls = event.mimeData().urls()
+            for url in urls:
+                file_path = url.toLocalFile()
+                
+                # Only accept NIFTI files
+                if file_path.endswith(('.nii', '.nii.gz')):
+                    print(f"✓ Image dropped: {file_path}")
+                    self.image_dropped.emit(file_path)
+                    event.acceptProposedAction()
+                    return
+        
+        event.ignore()
     
     def set_image(self, image_data: np.ndarray, spacing: np.ndarray):
         """Set image data and physical spacing"""
         self.image_data = image_data
         self.spacing = spacing
-        self.draw_image(image_data[:, :, 0])  # Show first slice
+        self.draw_image(image_data[:, :, 0])
     
     def set_segmentation(self, seg_data: np.ndarray):
         """Set segmentation data"""
@@ -50,7 +94,7 @@ class ImageViewer(QWidget):
         self.draw_image(self.image_data[:, :, 0], self.seg_data[:, :, 0])
     
     def set_axis(self, axis: int):
-        """Set viewing axis (0=sagittal, 1=coronal, 2=axial)"""
+        """Set viewing axis"""
         self.axis = axis
     
     def update_slice(self, image_slice: np.ndarray, seg_slice: np.ndarray = None):
@@ -67,18 +111,16 @@ class ImageViewer(QWidget):
         
         # Overlay segmentation if available and visible
         if seg_slice is not None and self.overlay_visible:
-            # Create colormap for segmentation
             colors = ['black', 'red', 'green', 'blue', 'yellow', 'cyan', 'magenta']
             colors.extend(['#' + ''.join([np.random.choice('0123456789ABCDEF') for _ in range(3)]) 
                           for _ in range(20)])
             
             cmap = ListedColormap(colors[:int(seg_slice.max()) + 1])
             
-            # Display segmentation with transparency
             seg_display = np.ma.masked_where(seg_slice == 0, seg_slice)
             ax.imshow(seg_display, cmap=cmap, alpha=self.overlay_opacity, origin='lower')
         
-        ax.set_title('Image Stack')
+        ax.set_title('Image Stack (Drag & Drop Images Here)')
         ax.axis('off')
         
         self.canvas.draw()

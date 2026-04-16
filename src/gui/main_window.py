@@ -10,7 +10,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QSlider, QSpinBox, QComboBox,
     QFileDialog, QMessageBox, QProgressBar, QFrame,
-    QDialog  # ADD THIS
+    QDialog, QScrollArea
 )
 from PyQt6.QtCore import Qt, pyqtSignal, QThread
 from PyQt6.QtGui import QFont
@@ -76,29 +76,106 @@ class MainWindow(QMainWindow):
         self.redo_stack = []
         
         self.init_ui()
-    
+
     def init_ui(self):
         """Initialize user interface"""
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
-        layout = QHBoxLayout(main_widget)
         
-        # LEFT PANEL: Controls
+        # Main layout: Left controls, Right image area
+        main_layout = QHBoxLayout(main_widget)
+        
+        # ========== LEFT PANEL: Narrow scrollable controls ==========
         left_panel = self.create_left_panel()
-        layout.addWidget(left_panel, 0)
+        left_scroll = QScrollArea()
+        left_scroll.setWidget(left_panel)
+        left_scroll.setWidgetResizable(True)
+        left_scroll.setMaximumWidth(280)  # Narrower
+        main_layout.addWidget(left_scroll, 0)
         
-        # CENTER: Image viewer
+        # ========== RIGHT PANEL: Image viewer + slice navigation ==========
+        right_panel = QWidget()
+        right_layout = QVBoxLayout(right_panel)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(5)
+        
+        # Image viewer (takes most space)
         self.viewer = ImageViewer()
-        layout.addWidget(self.viewer, 1)
+        self.viewer.image_dropped.connect(self.on_image_dropped)
+        right_layout.addWidget(self.viewer, 1)
+        
+        # Slice navigation bar at bottom
+        slice_nav_widget = self.create_slice_navigation()
+        right_layout.addWidget(slice_nav_widget, 0)
+        
+        main_layout.addWidget(right_panel, 1)
         
         self.show()
     
-    def create_left_panel(self) -> QWidget:
-        """Create left control panel"""
-        panel = QWidget()
-        panel.setMaximumWidth(250)
-        layout = QVBoxLayout(panel)
+    def create_slice_navigation(self) -> QWidget:
+        """Create slice navigation bar for bottom of viewer"""
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(5, 5, 5, 5)
         layout.setSpacing(10)
+        
+        # Axis button
+        self.axis_btn = self.create_button("Axis: Axial", self.switch_axis, color="#2196F3")
+        self.axis_btn.setMaximumWidth(120)
+        layout.addWidget(self.axis_btn)
+        
+        # Slice label
+        layout.addWidget(QLabel("Slice:"))
+        
+        # Slice slider
+        self.slice_slider = QSlider(Qt.Orientation.Horizontal)
+        self.slice_slider.setMinimum(0)
+        self.slice_slider.valueChanged.connect(self.update_slice)
+        layout.addWidget(self.slice_slider, 1)
+        
+        # Slice counter
+        self.slice_label = QLabel("0/0")
+        self.slice_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.slice_label.setMaximumWidth(50)
+        layout.addWidget(self.slice_label)
+        
+        return widget
+    
+    def on_image_dropped(self, file_path: str):
+        """Handle image dropped on viewer"""
+        try:
+            print(f"Loading dropped image: {file_path}")
+            
+            # Load image
+            data, spacing, affine = self.image_handler.load_image(file_path)
+            self.current_image_path = file_path
+            
+            # Update viewer
+            self.viewer.set_image(data, spacing)
+            self.slice_slider.setMaximum(data.shape[2] - 1)
+            self.update_slice(0)
+            
+            # Update label
+            name = Path(file_path).name
+            shape = " × ".join(map(str, data.shape))
+            self.image_label.setText(f"{name}\n{shape}")
+            
+            # Enable prediction if model is loaded
+            if self.predictor:
+                self.predict_btn.setEnabled(True)
+            
+            print(f"✓ Loaded: {name}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load image:\n{str(e)}")
+
+
+    def create_left_panel(self) -> QWidget:
+        """Create left control panel (narrower, scrollable)"""
+        panel = QWidget()
+        layout = QVBoxLayout(panel)
+        layout.setSpacing(8)
+        layout.setContentsMargins(10, 10, 10, 10)
         
         # ==================== FILE OPERATIONS ====================
         section = self.create_section("FILE")
@@ -108,28 +185,26 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.load_image_btn)
         
         self.image_label = QLabel("No image")
-        self.image_label.setStyleSheet("color: #666; font-size: 9px;")
+        self.image_label.setStyleSheet("color: #666; font-size: 8px;")
+        self.image_label.setWordWrap(True)
         layout.addWidget(self.image_label)
         
         # ==================== MODEL ====================
         section = self.create_section("MODEL")
         layout.addWidget(section)
         
-        # Model selector
         layout.addWidget(QLabel("Select Model:"))
         self.model_combo = QComboBox()
         self.update_model_list()
         layout.addWidget(self.model_combo)
         
-        # Load model button
         self.load_model_btn = self.create_button(
-            "Load Selected Model",
+            "Load Model",
             self.load_model,
             color="#4CAF50"
         )
         layout.addWidget(self.load_model_btn)
         
-        # Add model button
         self.add_model_btn = self.create_button(
             "Add Model...",
             self.add_new_model,
@@ -137,44 +212,26 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(self.add_model_btn)
         
-        # Model status
-        self.model_label = QLabel("No model loaded")
-        self.model_label.setStyleSheet("color: #f44336; font-size: 9px;")
+        self.model_label = QLabel("No model")
+        self.model_label.setStyleSheet("color: #f44336; font-size: 8px;")
         self.model_label.setWordWrap(True)
         layout.addWidget(self.model_label)
-
+        
         # ==================== PREDICTION ====================
         section = self.create_section("PREDICTION")
         layout.addWidget(section)
         
-        self.predict_btn = self.create_button("Run Prediction", self.run_prediction, color="#FF9800")
+        self.predict_btn = self.create_button(
+            "Run Prediction",
+            self.run_prediction,
+            color="#FF9800"
+        )
         self.predict_btn.setEnabled(False)
         layout.addWidget(self.predict_btn)
         
         self.progress_bar = QProgressBar()
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
-        
-        # ==================== VIEW ====================
-        section = self.create_section("VIEW")
-        layout.addWidget(section)
-        
-        axis_layout = QHBoxLayout()
-        self.axis_btn = self.create_button("Axis: Axial", self.switch_axis, color="#2196F3")
-        self.axis_btn.setMaximumWidth(120)
-        axis_layout.addWidget(self.axis_btn)
-        layout.addLayout(axis_layout)
-        
-        # Slice control
-        layout.addWidget(QLabel("Slice:"))
-        self.slice_slider = QSlider(Qt.Orientation.Horizontal)
-        self.slice_slider.setMinimum(0)
-        self.slice_slider.valueChanged.connect(self.update_slice)
-        layout.addWidget(self.slice_slider)
-        
-        self.slice_label = QLabel("0/0")
-        self.slice_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(self.slice_label)
         
         # ==================== OVERLAY ====================
         section = self.create_section("OVERLAY")
@@ -188,7 +245,6 @@ class MainWindow(QMainWindow):
         self.toggle_overlay_btn.setEnabled(False)
         layout.addWidget(self.toggle_overlay_btn)
         
-        # Opacity
         layout.addWidget(QLabel("Opacity:"))
         self.opacity_slider = QSlider(Qt.Orientation.Horizontal)
         self.opacity_slider.setMinimum(0)
@@ -209,7 +265,6 @@ class MainWindow(QMainWindow):
         self.edit_btn.setEnabled(False)
         layout.addWidget(self.edit_btn)
         
-        # Brush size
         layout.addWidget(QLabel("Brush Size:"))
         brush_layout = QHBoxLayout()
         
@@ -225,7 +280,6 @@ class MainWindow(QMainWindow):
         brush_layout.addWidget(self.brush_label)
         layout.addLayout(brush_layout)
         
-        # Tool selection
         tool_layout = QHBoxLayout()
         self.paint_btn = self.create_button("Paint", lambda: self.set_tool("paint"), mini=True)
         self.erase_btn = self.create_button("Erase", lambda: self.set_tool("erase"), mini=True)
@@ -233,7 +287,6 @@ class MainWindow(QMainWindow):
         tool_layout.addWidget(self.erase_btn)
         layout.addLayout(tool_layout)
         
-        # Label selection
         layout.addWidget(QLabel("Paint Label:"))
         self.label_spin = QSpinBox()
         self.label_spin.setMinimum(1)
@@ -241,7 +294,6 @@ class MainWindow(QMainWindow):
         self.label_spin.setValue(1)
         layout.addWidget(self.label_spin)
         
-        # Undo/Redo
         undo_layout = QHBoxLayout()
         self.undo_btn = self.create_button("Undo", self.undo, mini=True)
         self.undo_btn.setEnabled(False)
@@ -255,9 +307,22 @@ class MainWindow(QMainWindow):
         section = self.create_section("SAVE")
         layout.addWidget(section)
         
-        self.save_btn = self.create_button("Save Segmentation", self.save_segmentation, color="#673AB7")
+        self.save_btn = self.create_button(
+            "Save Segmentation",
+            self.save_segmentation,
+            color="#673AB7"
+        )
         self.save_btn.setEnabled(False)
         layout.addWidget(self.save_btn)
+        
+        self.export_custom_btn = self.create_button(
+            "Export As...",
+            self.save_segmentation,
+            color="#673AB7",
+            mini=True
+        )
+        self.export_custom_btn.setEnabled(False)
+        layout.addWidget(self.export_custom_btn)
         
         layout.addStretch()
         return panel
