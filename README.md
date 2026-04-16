@@ -3,7 +3,7 @@ conda create -n nnunet-gui python=3.10 -y
 conda activate nnunet-gui
 
 # 2. Install dependencies
-pip install -r requirements_simple.txt
+pip install -r requirements.txt
 
 # 3. Setup nnUNet paths (one-time)
 mkdir -p ~/nnUNet_raw ~/nnUNet_preprocessed ~/nnUNet_results
