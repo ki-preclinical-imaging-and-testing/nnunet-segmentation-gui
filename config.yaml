@@ -5,37 +5,4 @@ nnunet_preprocessed: ~/nnUNet_preprocessed
 nnunet_raw: ~/nnUNet_raw
 nnunet_results: ~/nnUNet_results
 registered_models:
-  Liver Segmentation:
-    checkpoint: /path/to/liver_model/checkpoint_best.pth
-    description: 'Segments liver from CT images
-
-      Labels: 1=Liver, 2=Tumor'
-  Lung Segmentation:
-    checkpoint: /shared_drive/models/lung/checkpoint_best.pth
-    description: 'Segments lungs from CT
-
-      Labels: 1=Left Lung, 2=Right Lung, 3=Nodule'
-  Spleen Segmentation:
-    checkpoint: /home/user/models/spleen/checkpoint_final.pth
-    description: Segments spleen from CT
-  fold_0:
-    checkpoint: /home/ascott/Documents/Jupyter-sandbox/nnUnet-LungTumor/nnUnet_results/Dataset001_LungTumor/nnUNetTrainer__nnUNetPlans__3d_fullres/fold_0/checkpoint_best.pth
-    description: '0 = background
-
-      1 = lung
-
-      2 = tumor'
-  lung mask:
-    checkpoint: /mnt/bmc-lab6/Anderson_Scott/nnUnet-LungMaskModel/results/Dataset001_LungMask/nnUNetTrainer__nnUNetPlans__3d_fullres/fold_0/checkpoint_best.pth
-    description: ''
-  lung tumor model:
-    checkpoint: /home/ascott/Documents/Jupyter-sandbox/nnUnet-LungTumor/nnUnet_results/Dataset001_LungTumor/nnUNetTrainer__nnUNetPlans__3d_fullres/fold_0/checkpoint_best.pth
-    description: ''
-  lung-mask:
-    checkpoint: /mnt/bmc-lab6/Anderson_Scott/nnUnet-LungMaskModel/results/Dataset001_LungMask/nnUNetTrainer__nnUNetPlans__3d_fullres/fold_0/checkpoint_best.pth
-    description: '0 = background
-
-      1 = lungs'
-  new_lung_tumor:
-    checkpoint: /home/ascott/Documents/Jupyter-sandbox/nnUnet-LungTumor/nnUnet_results/Dataset001_LungTumor/nnUNetTrainer__nnUNetPlans__3d_fullres/fold_0/checkpoint_best.pth
-    description: ''
+  
