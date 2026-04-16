@@ -1,0 +1,10 @@
+PyQt6==6.6.1
+nibabel>=5.2.0
+numpy>=2.0.0
+scipy==1.11.4
+matplotlib==3.8.0
+scikit-image==0.21.0
+pyyaml==6.0
+torch>=2.0.0
+torchvision>=0.15.0
+nnunetv2>=2.2.0
