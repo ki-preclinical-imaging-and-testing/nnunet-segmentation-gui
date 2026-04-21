@@ -161,6 +161,8 @@ class AddModelDialog(QDialog):
                 parent_dir = checkpoint_path.parent.parent.name if model_type == "nnunet" else checkpoint_path.parent.name
                 self.name_input.setText(parent_dir)
     
+# src/gui/add_model_dialog.py - Update extract_parameters method
+
     def extract_parameters(self, model_type: str, checkpoint_path: str):
         """Extract and display model parameters"""
         self.extracted_info = {}
@@ -170,6 +172,8 @@ class AddModelDialog(QDialog):
                 self.extracted_info = ModelManager.extract_nnunet_info(checkpoint_path)
             elif model_type == "yolo":
                 self.extracted_info = ModelManager.extract_yolo_info(checkpoint_path)
+                # Add editable task field
+                self.extracted_info['task_options'] = ['detect', 'segment', 'classify', 'pose']
             else:  # pytorch
                 self.extracted_info = ModelManager.extract_pytorch_info(checkpoint_path)
             

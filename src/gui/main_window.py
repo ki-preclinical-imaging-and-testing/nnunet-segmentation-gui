@@ -490,10 +490,13 @@ class MainWindow(QMainWindow):
             
             if model_type == 'nnunet':
                 self.predictor = Predictor(model_data, model_name, "cuda")
+            elif model_type == 'yolo':
+                self.predictor = Predictor(model_data, model_name, "cuda")
+                print(f"YOLO Task: {model_data.get('model_info', {}).get('task', 'unknown')}")
             else:
                 raise NotImplementedError(f"{model_type} inference not yet implemented")
             
-            self.model_label.setText(f"✓ {model_name}")
+            self.model_label.setText(f"✓ {model_name} ({model_type})")
             self.model_label.setStyleSheet("color: #4CAF50; font-size: 9px;")
             
             if self.current_image_path:

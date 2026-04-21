@@ -152,15 +152,17 @@ class ModelManager:
         
         return info
     
+
     @staticmethod
     def extract_yolo_info(checkpoint_path: str) -> dict:
         """Extract YOLO parameters from checkpoint path"""
         path = Path(checkpoint_path)
+        path_str = str(path)
         
         info = {
             'model_size': 'm',  # Default
             'device': 'cuda',
-            'task': 'detect'  # detect, segment, classify, pose
+            'task': 'segment',  # detect, segment, classify, pose
         }
         
         # Try to extract model size from filename
@@ -169,6 +171,18 @@ class ModelManager:
             if f'yolo{size}' in filename or f'-{size}.pt' in filename:
                 info['model_size'] = size
                 break
+        
+        # Check path for task hints
+        if 'detect' in path_str.lower():
+            info['task'] = 'detect'
+        elif 'segment' in path_str.lower():
+            info['task'] = 'segment'
+        elif 'classify' in path_str.lower():
+            info['task'] = 'classify'
+        elif 'pose' in path_str.lower():
+            info['task'] = 'pose'
+        
+        print(f"Detected YOLO settings: size={info['model_size']}, task={info['task']}")
         
         return info
     

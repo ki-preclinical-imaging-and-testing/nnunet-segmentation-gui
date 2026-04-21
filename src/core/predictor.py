@@ -3,6 +3,8 @@
 from pathlib import Path
 from typing import Optional
 import subprocess
+import cv2
+import numpy as np
 import os
 import sys
 import shutil
@@ -273,11 +275,17 @@ class Predictor:
         print(f"  ✗ No prediction file found")
         return None
 
+# src/core/predictor.py - Update predict_yolo method
+
     def predict_yolo(self, image_path: str, output_dir: str) -> Optional[str]:
-        """Run YOLO prediction"""
+        """
+        Run YOLO prediction on 3D NIFTI volume
+        
+        Processes each 2D slice and creates 3D segmentation output
+        """
         try:
             print(f"\n{'='*60}")
-            print(f"YOLO Prediction")
+            print(f"YOLO Prediction (3D)")
             print(f"{'='*60}")
             print(f"Input:  {image_path}")
             print(f"Output: {output_dir}")
@@ -286,6 +294,17 @@ class Predictor:
             # Create output directory
             output_path = Path(output_dir) / self.model_name
             output_path.mkdir(parents=True, exist_ok=True)
+            
+            # Load NIFTI image
+            import nibabel as nib
+            from PIL import Image
+            import torch
+            
+            img = nib.load(image_path)
+            img_data = img.get_fdata()
+            
+            print(f"Image shape: {img_data.shape}")
+            print(f"Processing {img_data.shape[2]} slices...")
             
             # Import YOLO
             try:
@@ -296,37 +315,114 @@ class Predictor:
                 )
             
             # Load model
-            print(f"Loading YOLO model from {self.checkpoint_path}...")
+            print(f"Loading YOLO model...")
             model = YOLO(str(self.checkpoint_path))
             
-            # Run inference
-            print(f"Running YOLO inference...")
-            results = model.predict(
-                source=image_path,
-                save=True,
-                project=str(output_path.parent),
-                name=self.model_name,
-                device=0 if self.device == "cuda" else "cpu"
-            )
+            # Initialize 3D prediction volume
+            pred_volume = np.zeros_like(img_data, dtype=np.int32)
+            
+            # Process each slice
+            for slice_idx in range(img_data.shape[2]):
+                # Get slice
+                slice_data = img_data[:, :, slice_idx]
+                
+                # Skip empty slices
+                if slice_data.max() == 0:
+                    continue
+                
+                # Normalize to 0-255 for YOLO
+                if slice_data.max() > 0:
+                    slice_normalized = (slice_data / slice_data.max() * 255).astype(np.uint8)
+                else:
+                    slice_normalized = slice_data.astype(np.uint8)
+                
+                # Convert grayscale to RGB using PIL (more reliable)
+                slice_pil = Image.fromarray(slice_normalized, mode='L')
+                slice_rgb = slice_pil.convert('RGB')
+                
+                # Convert PIL Image to numpy array
+                slice_array = np.array(slice_rgb)
+                
+                print(f"  Slice {slice_idx}: shape={slice_array.shape}, dtype={slice_array.dtype}")
+                
+                # Run YOLO inference using PIL Image directly
+                try:
+                    results = model.predict(
+                        source=slice_rgb,  # Pass PIL Image directly
+                        verbose=False,
+                        device=0 if self.device == "cuda" else "cpu",
+                        conf=0.5  # Confidence threshold
+                    )
+                except Exception as e:
+                    print(f"  Warning: Failed on slice {slice_idx}: {e}")
+                    continue
+                
+                # Convert results to segmentation mask
+                if results and len(results) > 0:
+                    result = results[0]
+                    
+                    # Create mask from detections
+                    if result.masks is not None:
+                        # YOLO returns instance masks
+                        masks = result.masks.data.cpu().numpy()
+                        
+                        # Combine all masks into single class map
+                        if len(masks) > 0:
+                            # Stack masks - each instance gets a class label
+                            for mask_idx, mask in enumerate(masks):
+                                # Resize mask to match slice
+                                mask_resized = cv2.resize(
+                                    mask.astype(np.float32),
+                                    (slice_data.shape[1], slice_data.shape[0])
+                                )
+                                pred_volume[:, :, slice_idx][mask_resized > 0.5] = mask_idx + 1
+                    
+                    elif result.boxes is not None:
+                        # Fallback: use bounding boxes if masks unavailable
+                        boxes = result.boxes.xyxy.cpu().numpy()
+                        for box_idx, box in enumerate(boxes):
+                            x1, y1, x2, y2 = [int(b) for b in box]
+                            # Bounds checking
+                            x1 = max(0, min(x1, slice_data.shape[1]))
+                            x2 = max(0, min(x2, slice_data.shape[1]))
+                            y1 = max(0, min(y1, slice_data.shape[0]))
+                            y2 = max(0, min(y2, slice_data.shape[0]))
+                            if x2 > x1 and y2 > y1:
+                                pred_volume[y1:y2, x1:x2, slice_idx] = box_idx + 1
+                
+                # Progress
+                if (slice_idx + 1) % max(1, img_data.shape[2] // 10) == 0:
+                    print(f"  Processed: {slice_idx + 1}/{img_data.shape[2]} slices")
             
             print(f"✓ YOLO inference complete")
             
-            # Results are saved automatically by YOLO
-            result_files = list(output_path.glob("*.nii.gz")) + list(output_path.glob("*.nii"))
-            if result_files:
-                print(f"✓ Results saved: {result_files[0]}")
-                return str(result_files[0])
+            # Check if we got any predictions
+            if pred_volume.max() == 0:
+                print(f"⚠ Warning: No detections found in any slice")
+            else:
+                print(f"  Classes found: {np.unique(pred_volume)}")
             
-            # YOLO saves results differently (images, txt files, etc.)
-            print(f"Results saved to: {output_path}")
-            return str(output_path)
+            # Save as NIFTI
+            pred_img = nib.Nifti1Image(pred_volume.astype(np.int16), img.affine)
+            
+            # Get input filename
+            input_stem = Path(image_path).stem
+            if input_stem.endswith('.nii'):
+                input_stem = input_stem[:-4]
+            
+            output_file = output_path / f"{input_stem}_seg.nii.gz"
+            nib.save(pred_img, output_file)
+            
+            print(f"✓ Prediction saved: {output_file.name}")
+            return str(output_file)
             
         except Exception as e:
             print(f"✗ YOLO prediction failed: {e}")
             import traceback
             traceback.print_exc()
             return None
-    
+
+
     def predict_pytorch(self, image_path: str, output_dir: str) -> Optional[str]:
         """Run PyTorch model prediction"""
         try:
