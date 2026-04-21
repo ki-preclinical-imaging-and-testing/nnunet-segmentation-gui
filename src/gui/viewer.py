@@ -100,7 +100,7 @@ class ImageViewer(QWidget):
     def update_slice(self, image_slice: np.ndarray, seg_slice: np.ndarray = None):
         """Update displayed slice"""
         self.draw_image(image_slice, seg_slice)
-    
+
     def draw_image(self, image_slice: np.ndarray, seg_slice: np.ndarray = None):
         """Draw image with optional overlay"""
         self.figure.clear()
@@ -111,20 +111,40 @@ class ImageViewer(QWidget):
         
         # Overlay segmentation if available and visible
         if seg_slice is not None and self.overlay_visible:
+            # Ensure seg_slice is integer
+            seg_slice = np.asarray(seg_slice, dtype=np.int32)
+            
+            # Get unique labels
+            unique_labels = np.unique(seg_slice)
+            num_labels = len(unique_labels)
+            
+            # Generate colors for all labels
             colors = ['black', 'red', 'green', 'blue', 'yellow', 'cyan', 'magenta']
-            colors.extend(['#' + ''.join([np.random.choice('0123456789ABCDEF') for _ in range(3)]) 
-                          for _ in range(20)])
             
-            cmap = ListedColormap(colors[:int(seg_slice.max()) + 1])
+            # Add more colors if needed
+            while len(colors) < num_labels:
+                colors.append('#' + ''.join([np.random.choice('0123456789ABCDEF') for _ in range(3)]))
             
+            # Create colormap
+            cmap = ListedColormap(colors[:num_labels])
+            
+            # Mask background (label 0)
             seg_display = np.ma.masked_where(seg_slice == 0, seg_slice)
-            ax.imshow(seg_display, cmap=cmap, alpha=self.overlay_opacity, origin='lower')
+            
+            # Display with opacity
+            ax.imshow(
+                seg_display,
+                cmap=cmap,
+                alpha=self.overlay_opacity,
+                origin='lower',
+                vmin=0,
+                vmax=num_labels - 1
+            )
         
         ax.set_title('Image Stack (Drag & Drop Images Here)')
         ax.axis('off')
         
         self.canvas.draw()
-    
     def toggle_overlay(self):
         """Toggle segmentation overlay visibility"""
         self.overlay_visible = not self.overlay_visible

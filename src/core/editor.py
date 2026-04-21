@@ -22,7 +22,7 @@ class BrushEditor:
         """Update brush size"""
         self.brush_size = size
         self.brush_mask_3d = self._create_brush_mask()
-    
+
     def paint_3d(
         self,
         seg_volume: np.ndarray,
@@ -33,12 +33,15 @@ class BrushEditor:
         Paint label at 3D position
         
         Args:
-            seg_volume: 3D segmentation array
+            seg_volume: 3D segmentation array (integer class labels)
             center: (z, y, x) center position
-            label: Label value to paint (0 for erase)
+            label: Label value to paint (integer)
         """
-        result = seg_volume.copy()
-        z, y, x = center
+        # Ensure proper types
+        result = np.asarray(seg_volume, dtype=np.int32).copy()
+        label = int(label)
+        
+        z, y, x = [int(c) for c in center]
         s = self.brush_size
         
         # Bounds
@@ -62,8 +65,8 @@ class BrushEditor:
         
         result[z_min:z_max, y_min:y_max, x_min:x_max][mask == 1] = label
         
-        return result
-    
+        return result.astype(np.int32)
+        
     def erase_3d(
         self,
         seg_volume: np.ndarray,

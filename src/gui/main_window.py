@@ -12,9 +12,8 @@ from PyQt6.QtWidgets import (
     QFileDialog, QMessageBox, QProgressBar, QFrame,
     QDialog, QScrollArea
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QThread
+from PyQt6.QtCore import Qt, pyqtSignal, QThread, QObject, QTimer
 from PyQt6.QtGui import QFont
-from PyQt6.QtCore import QTimer
 
 import numpy as np
 import nibabel as nib
@@ -26,27 +25,45 @@ from src.core.model_manager import ModelManager
 from src.core.predictor import Predictor
 from src.core.editor import BrushEditor
 from src.gui.add_model_dialog import AddModelDialog
+from src.gui.loading_dialog import LoadingDialog
+from src.gui.previous_prediction_dialog import PreviousPredictionDialog
 
-class PredictionWorker(QThread):
-    """Background worker for predictions"""
+class PredictionWorker(QObject):
+    """Worker for running predictions in background thread"""
+    
     finished = pyqtSignal(str)  # Emits result path
     error = pyqtSignal(str)
+    status_changed = pyqtSignal(str)
     
-    def __init__(self, predictor, image_path, output_dir):
+    def __init__(self, predictor, image_path):
         super().__init__()
         self.predictor = predictor
         self.image_path = image_path
-        self.output_dir = output_dir
+        self.should_stop = False
     
     def run(self):
+        """Run prediction"""
         try:
-            result = self.predictor.predict(self.image_path, self.output_dir)
+            output_dir = Path(self.image_path).parent / "predictions"
+            
+            self.status_changed.emit("Preparing image...")
+            
+            # Run prediction
+            self.status_changed.emit("Running model inference...")
+            result = self.predictor.predict(str(self.image_path), str(output_dir))
+            
             if result:
+                self.status_changed.emit("Prediction complete!")
                 self.finished.emit(result)
             else:
-                self.error.emit("Prediction failed")
+                self.error.emit("Prediction completed but output file not found")
+        
         except Exception as e:
-            self.error.emit(str(e))
+            self.error.emit(f"Prediction failed: {str(e)}")
+    
+    def stop(self):
+        """Stop prediction"""
+        self.should_stop = True
 
 
 class MainWindow(QMainWindow):
@@ -62,6 +79,7 @@ class MainWindow(QMainWindow):
         self.model_manager = ModelManager(models_dir)
         self.predictor: Optional[Predictor] = None
         self.editor = BrushEditor(brush_size=15)
+        self.prediction_thread = None
         
         # State
         self.current_image_path: Optional[str] = None
@@ -145,6 +163,9 @@ class MainWindow(QMainWindow):
         """Handle image dropped on viewer"""
         try:
             print(f"Loading dropped image: {file_path}")
+
+            # Clear previous segmentation
+            self.clear_segmentation()
             
             # Load image
             data, spacing, affine = self.image_handler.load_image(file_path)
@@ -168,7 +189,6 @@ class MainWindow(QMainWindow):
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load image:\n{str(e)}")
-
 
     def create_left_panel(self) -> QWidget:
         """Create left control panel (narrower, scrollable)"""
@@ -380,19 +400,25 @@ class MainWindow(QMainWindow):
         else:
             self.model_combo.addItem("No models found")
     
+# src/gui/main_window.py - Update load_image method
+
     def load_image(self):
         """Load NIFTI image"""
-        filepath, _ = QFileDialog.getOpenFileName(
+        file_path, _ = QFileDialog.getOpenFileName(
             self,
             "Load NIFTI Image",
             "",
             "NIFTI Files (*.nii *.nii.gz);;All Files (*)"
         )
         
-        if filepath:
+        if file_path:
             try:
-                data, spacing, affine = self.image_handler.load_image(filepath)
-                self.current_image_path = filepath
+                # Clear previous segmentation
+                self.clear_segmentation()
+                
+                # Load new image
+                data, spacing, affine = self.image_handler.load_image(file_path)
+                self.current_image_path = file_path
                 
                 # Update viewer
                 self.viewer.set_image(data, spacing)
@@ -400,7 +426,7 @@ class MainWindow(QMainWindow):
                 self.update_slice(0)
                 
                 # Update label
-                name = Path(filepath).name
+                name = Path(file_path).name
                 shape = " × ".join(map(str, data.shape))
                 self.image_label.setText(f"{name}\n{shape}")
                 
@@ -412,9 +438,41 @@ class MainWindow(QMainWindow):
                 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load image:\n{str(e)}")
+    
+    def clear_segmentation(self):
+        """Clear current segmentation and disable related controls"""
+        print("Clearing segmentation...")
+        
+        # Clear data
+        self.seg_data = None
+        self.current_prediction_path = None
+        
+        # Clear viewer
+        self.viewer.seg_data = None
+        self.viewer.draw_image(
+            self.viewer.image_data[:, :, 0] if self.viewer.image_data is not None else np.zeros((256, 256))
+        )
+        
+        # Disable controls
+        self.toggle_overlay_btn.setEnabled(False)
+        self.edit_btn.setEnabled(False)
+        self.save_btn.setEnabled(False)
+        self.export_custom_btn.setEnabled(False)
+        
+        # Reset editing mode
+        if self.editing:
+            self.toggle_editing()  # Turn off editing if on
+        
+        # Clear undo/redo stacks
+        self.undo_stack.clear()
+        self.redo_stack.clear()
+        self.undo_btn.setEnabled(False)
+        self.redo_btn.setEnabled(False)
+        
+        print("✓ Segmentation cleared")
 
     def load_model(self):
-        """Load selected nnUNet model"""
+        """Load selected model"""
         model_name = self.model_combo.currentText()
         
         if model_name == "No models found":
@@ -422,79 +480,177 @@ class MainWindow(QMainWindow):
             return
         
         try:
-            model_path = self.model_manager.get_model_path(model_name)
+            model_data = self.model_manager.get_model(model_name)
             
-            if not model_path:
-                raise ValueError(f"Model path not found for {model_name}")
+            if not model_data:
+                raise ValueError(f"Model data not found for {model_name}")
             
-            print(f"Loading model: {model_name}")
-            print(f"Path: {model_path}")
+            model_type = model_data.get('type', 'nnunet')
+            print(f"Loading {model_type} model: {model_name}")
             
-            # Pass model name to predictor for output folder naming
-            self.predictor = Predictor(
-                str(model_path / "fold_0" / "checkpoint_best.pth"),
-                model_name=model_name,
-                device="cuda"
-            )
+            if model_type == 'nnunet':
+                self.predictor = Predictor(model_data, model_name, "cuda")
+            else:
+                raise NotImplementedError(f"{model_type} inference not yet implemented")
             
             self.model_label.setText(f"✓ {model_name}")
             self.model_label.setStyleSheet("color: #4CAF50; font-size: 9px;")
             
-            # Enable prediction if image is loaded
             if self.current_image_path:
                 self.predict_btn.setEnabled(True)
             
             print(f"✓ Model loaded: {model_name}")
             
-            QMessageBox.information(
-                self,
-                "Model Loaded",
-                f"Successfully loaded: {model_name}"
-            )
-            
         except Exception as e:
             error_msg = str(e)
             self.model_label.setText("✗ Load failed")
             self.model_label.setStyleSheet("color: #f44336; font-size: 9px;")
-            
             print(f"✗ Error: {error_msg}")
-            
-            QMessageBox.critical(
-                self,
-                "Error Loading Model",
-                f"Failed to load model:\n\n{error_msg}"
-            )
-
+            QMessageBox.critical(self, "Error Loading Model", f"Failed to load model:\n\n{error_msg}")
+    
     def run_prediction(self):
-        """Run nnUNet prediction"""
+        """Run prediction with loading dialog"""
         if not self.current_image_path or not self.predictor:
             QMessageBox.warning(self, "Warning", "Load image and model first")
             return
         
         output_dir = Path(self.current_image_path).parent / "predictions"
+        prediction_model_dir = output_dir / self.predictor.model_name
         
-        self.progress_bar.setVisible(True)
-        self.predict_btn.setEnabled(False)
+        # Check for previous prediction
+        if prediction_model_dir.exists():
+            prev_pred = self.find_previous_prediction(prediction_model_dir)
+            if prev_pred:
+                dialog = PreviousPredictionDialog(str(prev_pred), self)
+                dialog.exec()
+                
+                if dialog.result == PreviousPredictionDialog.LOAD:
+                    # Load previous prediction
+                    self.load_prediction_file(prev_pred)
+                    return
+                elif dialog.result == PreviousPredictionDialog.CANCEL:
+                    return
+                # If OVERWRITE, continue to run prediction
         
+        # Show loading dialog
+        self.loading_dialog = LoadingDialog(self.predictor.model_name, self)
+        self.loading_dialog.cancel_requested.connect(self.cancel_prediction)
+        
+        # Start prediction in background thread
+        from PyQt6.QtCore import QThread
+        
+        self.prediction_thread = QThread()
         self.prediction_worker = PredictionWorker(
             self.predictor,
-            self.current_image_path,
-            str(output_dir)
+            self.current_image_path
         )
+        self.prediction_worker.moveToThread(self.prediction_thread)
+        
+        # Connect signals
+        self.prediction_thread.started.connect(self.prediction_worker.run)
+        self.prediction_worker.status_changed.connect(self.loading_dialog.set_status)
         self.prediction_worker.finished.connect(self.on_prediction_complete)
+        self.prediction_worker.finished.connect(self.prediction_thread.quit)
         self.prediction_worker.error.connect(self.on_prediction_error)
-        self.prediction_worker.start()
+        self.prediction_worker.error.connect(self.prediction_thread.quit)
+        
+        # Start thread
+        self.prediction_thread.start()
+        
+        # Show dialog
+        self.loading_dialog.exec()
+    
+    def find_previous_prediction(self, prediction_dir: Path):
+        """Find previous prediction file in directory"""
+        # Look for any .nii.gz files (excluding config files)
+        nifti_files = [
+            f for f in prediction_dir.glob("*.nii.gz")
+            if not f.name.startswith(('dataset', 'plans', 'predict_from'))
+        ]
+        
+        if nifti_files:
+            return nifti_files[0]
+        return None
+
+    def load_prediction_file(self, pred_path: Path):
+        """Load existing prediction file"""
+        try:
+            print(f"Loading prediction: {pred_path}")
+            
+            # Load the nifti file
+            pred_img = nib.load(str(pred_path))
+            
+            # Get data as float first
+            pred_data = pred_img.get_fdata()
+            
+            # Handle NaN values
+            pred_data = np.nan_to_num(pred_data, nan=0.0)
+            
+            # Convert to int32 (class labels)
+            self.seg_data = pred_data.astype(np.int32)
+            
+            # Verify data shape
+            print(f"  Shape: {self.seg_data.shape}")
+            print(f"  Dtype: {self.seg_data.dtype}")
+            print(f"  Min: {self.seg_data.min()}, Max: {self.seg_data.max()}")
+            
+            self.current_prediction_path = str(pred_path)
+            
+            # Display
+            self.viewer.set_segmentation(self.seg_data)
+            self.toggle_overlay_btn.setEnabled(True)
+            self.edit_btn.setEnabled(True)
+            self.save_btn.setEnabled(True)
+            
+            # Update current slice display
+            self.update_slice(self.slice_slider.value())
+            
+            QMessageBox.information(
+                self, "Prediction Loaded",
+                f"Loaded: {pred_path.name}\n"
+                f"Shape: {self.seg_data.shape}\n"
+                f"Classes: {self.seg_data.min()} - {self.seg_data.max()}"
+            )
+            
+            print(f"✓ Prediction loaded successfully")
+            
+        except Exception as e:
+            print(f"✗ Error loading prediction: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(
+                self, "Error",
+                f"Failed to load prediction:\n{str(e)}"
+            )
+
+    def cancel_prediction(self):
+        """Cancel prediction"""
+        if self.prediction_thread and self.prediction_thread.isRunning():
+            self.prediction_worker.stop()
+            self.prediction_thread.quit()
+            self.prediction_thread.wait()
+            self.loading_dialog.close_dialog()
+            QMessageBox.information(self, "Cancelled", "Prediction cancelled")
+
 
     def add_new_model(self):
         """Open dialog to add new model"""
+        from src.gui.add_model_dialog import AddModelDialog
+        
         dialog = AddModelDialog(self)
         
-        if dialog.exec() == QDialog.DialogCode.Accepted:  # Now QDialog is defined
+        if dialog.exec() == QDialog.DialogCode.Accepted:
             try:
-                name, checkpoint_path, description = dialog.get_model_info()
+                name, model_type, checkpoint_path, model_info, description = dialog.get_model_info()
                 
                 # Register model
-                self.model_manager.add_model(name, checkpoint_path, description)
+                self.model_manager.add_model(
+                    name,
+                    model_type,
+                    checkpoint_path,
+                    model_info,
+                    description
+                )
                 
                 # Refresh model list
                 self.update_model_list()
@@ -508,8 +664,8 @@ class MainWindow(QMainWindow):
                     self,
                     "Success",
                     f"Model '{name}' added successfully!\n\n"
-                    f"Path: {checkpoint_path}\n\n"
-                    f"Description:\n{description}"
+                    f"Type: {model_type}\n"
+                    f"Path: {checkpoint_path}"
                 )
                 
                 print(f"✓ Model added: {name}")
@@ -520,30 +676,29 @@ class MainWindow(QMainWindow):
     def on_prediction_complete(self, pred_path: str):
         """Handle successful prediction"""
         try:
-            # Load prediction
-            pred_img = nib.load(pred_path)
-            self.seg_data = pred_img.get_fdata().astype(np.int32)
-            self.current_prediction_path = pred_path
+            # Close loading dialog
+            if hasattr(self, 'loading_dialog'):
+                self.loading_dialog.close_dialog()
             
-            # Display
-            self.viewer.set_segmentation(self.seg_data)
-            self.toggle_overlay_btn.setEnabled(True)
-            self.edit_btn.setEnabled(True)
-            self.save_btn.setEnabled(True)
+            if not pred_path:
+                QMessageBox.warning(self, "Error", "Prediction path is empty")
+                return
             
-            self.progress_bar.setVisible(False)
-            self.predict_btn.setEnabled(True)
-            
-            # Update current slice display
-            self.update_slice(self.slice_slider.value())
-            
-            QMessageBox.information(
-                self, "Success",
-                f"Prediction complete!\nSaved to: {pred_path}"
-            )
+            self.load_prediction_file(Path(pred_path))
             
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to load prediction:\n{str(e)}")
+            import traceback
+            traceback.print_exc()
+
+    def on_prediction_error(self, error: str):
+        """Handle prediction error"""
+        # Close loading dialog
+        if hasattr(self, 'loading_dialog'):
+            self.loading_dialog.close_dialog()
+        
+        self.predict_btn.setEnabled(True)
+        QMessageBox.critical(self, "Prediction Error", error)
     
     def on_prediction_error(self, error: str):
         """Handle prediction error"""
