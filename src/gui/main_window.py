@@ -323,6 +323,34 @@ class MainWindow(QMainWindow):
         undo_layout.addWidget(self.redo_btn)
         layout.addLayout(undo_layout)
         
+        # ==================== CONFIDENCE THRESHOLD (YOLO only) ====================
+        self.confidence_section = QLabel("YOLO Confidence Threshold")
+        confidence_section_font = QFont()
+        confidence_section_font.setBold(True)
+        confidence_section_font.setPointSize(10)
+        self.confidence_section.setFont(confidence_section_font)
+        self.confidence_section.setStyleSheet("padding-top: 10px; border-top: 1px solid #ccc;")
+        self.confidence_section.setVisible(False)  # Hidden until YOLO model loaded
+        layout.addWidget(self.confidence_section)
+        
+        # Confidence slider
+        self.confidence_slider = QSlider(Qt.Orientation.Horizontal)
+        self.confidence_slider.setMinimum(0)
+        self.confidence_slider.setMaximum(100)
+        self.confidence_slider.setValue(50)  # Default 0.5
+        self.confidence_slider.valueChanged.connect(self.update_confidence_threshold)
+        self.confidence_slider.setVisible(False)
+        layout.addWidget(self.confidence_slider)
+        
+        # Confidence value display
+        self.confidence_label = QLabel("Threshold: 0.50")
+        self.confidence_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.confidence_label.setStyleSheet("font-weight: bold; color: #2196F3;")
+        self.confidence_label.setVisible(False)
+        layout.addWidget(self.confidence_label)
+        
+        layout.addStretch()
+
         # ==================== SAVE ====================
         section = self.create_section("SAVE")
         layout.addWidget(section)
@@ -400,7 +428,6 @@ class MainWindow(QMainWindow):
         else:
             self.model_combo.addItem("No models found")
     
-# src/gui/main_window.py - Update load_image method
 
     def load_image(self):
         """Load NIFTI image"""
@@ -438,13 +465,16 @@ class MainWindow(QMainWindow):
                 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load image:\n{str(e)}")
-    
+
+    # src/gui/main_window.py - Update clear_segmentation method
+
     def clear_segmentation(self):
         """Clear current segmentation and disable related controls"""
         print("Clearing segmentation...")
         
         # Clear data
         self.seg_data = None
+        self.seg_confidence_data = None  # Add this line
         self.current_prediction_path = None
         
         # Clear viewer
@@ -458,10 +488,11 @@ class MainWindow(QMainWindow):
         self.edit_btn.setEnabled(False)
         self.save_btn.setEnabled(False)
         self.export_custom_btn.setEnabled(False)
+        self.show_confidence_controls(False)  # Hide confidence controls
         
         # Reset editing mode
         if self.editing:
-            self.toggle_editing()  # Turn off editing if on
+            self.toggle_editing()
         
         # Clear undo/redo stacks
         self.undo_stack.clear()
@@ -470,6 +501,8 @@ class MainWindow(QMainWindow):
         self.redo_btn.setEnabled(False)
         
         print("✓ Segmentation cleared")
+
+# src/gui/main_window.py - Update load_model method
 
     def load_model(self):
         """Load selected model"""
@@ -490,9 +523,11 @@ class MainWindow(QMainWindow):
             
             if model_type == 'nnunet':
                 self.predictor = Predictor(model_data, model_name, "cuda")
+                self.show_confidence_controls(False)  # Hide for nnUNet
             elif model_type == 'yolo':
                 self.predictor = Predictor(model_data, model_name, "cuda")
-                print(f"YOLO Task: {model_data.get('model_info', {}).get('task', 'unknown')}")
+                # Don't show controls yet - only show after prediction
+                self.show_confidence_controls(False)
             else:
                 raise NotImplementedError(f"{model_type} inference not yet implemented")
             
@@ -511,6 +546,28 @@ class MainWindow(QMainWindow):
             print(f"✗ Error: {error_msg}")
             QMessageBox.critical(self, "Error Loading Model", f"Failed to load model:\n\n{error_msg}")
     
+    def show_confidence_controls(self, show: bool = True):
+        """Show/hide confidence threshold controls"""
+        self.confidence_section.setVisible(show)
+        self.confidence_slider.setVisible(show)
+        self.confidence_label.setVisible(show)
+    
+    def update_confidence_threshold(self, value: int):
+        """Update segmentation based on confidence threshold"""
+        # Convert slider value (0-100) to confidence (0.0-1.0)
+        threshold = value / 100.0
+        self.confidence_label.setText(f"Threshold: {threshold:.2f}")
+        
+        # If we have raw confidence data, threshold it
+        if hasattr(self, 'seg_confidence_data') and self.seg_confidence_data is not None:
+            # Apply threshold
+            self.seg_data = (self.seg_confidence_data >= threshold).astype(np.int32)
+            
+            # Update viewer
+            self.update_slice(self.slice_slider.value())
+            
+            print(f"Confidence threshold updated to {threshold:.2f}")
+
     def run_prediction(self):
         """Run prediction with loading dialog"""
         if not self.current_image_path or not self.predictor:
@@ -575,24 +632,39 @@ class MainWindow(QMainWindow):
             return nifti_files[0]
         return None
 
+# src/gui/main_window.py - Update load_prediction_file method
+
     def load_prediction_file(self, pred_path: Path):
         """Load existing prediction file"""
         try:
             print(f"Loading prediction: {pred_path}")
             
-            # Load the nifti file
+            # Load the segmentation
             pred_img = nib.load(str(pred_path))
-            
-            # Get data as float first
             pred_data = pred_img.get_fdata()
-            
-            # Handle NaN values
             pred_data = np.nan_to_num(pred_data, nan=0.0)
-            
-            # Convert to int32 (class labels)
             self.seg_data = pred_data.astype(np.int32)
             
-            # Verify data shape
+            # Try to load confidence scores if available
+            self.seg_confidence_data = None
+            conf_path = pred_path.parent / pred_path.name.replace('_seg.nii.gz', '_confidence.nii.gz')
+            
+            if conf_path.exists():
+                print(f"Loading confidence scores: {conf_path.name}")
+                conf_img = nib.load(str(conf_path))
+                self.seg_confidence_data = conf_img.get_fdata().astype(np.float32)
+                
+                # Show confidence controls if YOLO prediction
+                if self.predictor and self.predictor.model_type == 'yolo':
+                    self.show_confidence_controls(True)
+                    self.confidence_slider.setValue(50)  # Reset to 0.5
+                    print(f"Confidence range: {self.seg_confidence_data.min():.3f} - {self.seg_confidence_data.max():.3f}")
+                else:
+                    self.show_confidence_controls(False)
+            else:
+                self.show_confidence_controls(False)
+            
+            # Verify data
             print(f"  Shape: {self.seg_data.shape}")
             print(f"  Dtype: {self.seg_data.dtype}")
             print(f"  Min: {self.seg_data.min()}, Max: {self.seg_data.max()}")
@@ -634,7 +706,6 @@ class MainWindow(QMainWindow):
             self.prediction_thread.wait()
             self.loading_dialog.close_dialog()
             QMessageBox.information(self, "Cancelled", "Prediction cancelled")
-
 
     def add_new_model(self):
         """Open dialog to add new model"""
@@ -703,12 +774,6 @@ class MainWindow(QMainWindow):
         self.predict_btn.setEnabled(True)
         QMessageBox.critical(self, "Prediction Error", error)
     
-    def on_prediction_error(self, error: str):
-        """Handle prediction error"""
-        self.progress_bar.setVisible(False)
-        self.predict_btn.setEnabled(True)
-        QMessageBox.critical(self, "Prediction Error", error)
-    
     def switch_axis(self):
         """Switch viewing axis"""
         axes = [0, 1, 2]
@@ -725,7 +790,7 @@ class MainWindow(QMainWindow):
             self.viewer.set_axis(axes[next_idx])
             max_slices = self.image_handler.get_shape(axes[next_idx])
             self.slice_slider.setMaximum(max_slices - 1)
-            self.slice_slider.setValue(0)
+            self.slice_slider.setValue(max_slices//2)
             self.update_slice(0)
     
     def update_slice(self, idx: int):

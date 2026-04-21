@@ -304,7 +304,7 @@ class Predictor:
             img_data = img.get_fdata()
             
             print(f"Image shape: {img_data.shape}")
-            print(f"Processing {img_data.shape[2]} slices...")
+            print(f"Processing {img_data.shape[0]} slices...")
             
             # Import YOLO
             try:
@@ -322,9 +322,9 @@ class Predictor:
             pred_volume = np.zeros_like(img_data, dtype=np.int32)
             
             # Process each slice
-            for slice_idx in range(img_data.shape[2]):
+            for slice_idx in range(img_data.shape[0]):
                 # Get slice
-                slice_data = img_data[:, :, slice_idx]
+                slice_data = img_data[slice_idx, :, :]
                 
                 # Skip empty slices
                 if slice_data.max() == 0:
@@ -375,7 +375,7 @@ class Predictor:
                                     mask.astype(np.float32),
                                     (slice_data.shape[1], slice_data.shape[0])
                                 )
-                                pred_volume[:, :, slice_idx][mask_resized > 0.5] = mask_idx + 1
+                                pred_volume[slice_idx, :, :][mask_resized > 0.2] = mask_idx + 1
                     
                     elif result.boxes is not None:
                         # Fallback: use bounding boxes if masks unavailable
