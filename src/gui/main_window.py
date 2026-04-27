@@ -76,20 +76,17 @@ class MainWindow(QMainWindow):
         
         # Core components
         self.image_handler = ImageHandler()
-        self.model_manager = ModelManager(models_dir)
+        self.model_manager = ModelManager()
         self.predictor: Optional[Predictor] = None
-        self.editor = BrushEditor(brush_size=15)
-        self.prediction_thread = None
         
         # State
         self.current_image_path: Optional[str] = None
         self.current_prediction_path: Optional[str] = None
         self.seg_data: Optional[np.ndarray] = None
+        self.seg_confidence_data: Optional[np.ndarray] = None
         self.prediction_worker: Optional[PredictionWorker] = None
-        self.editing = False
-        self.current_tool = "paint"  # paint or erase
         
-        # History for undo/redo
+        # History for undo/redo (keep for potential use, but not exposed in UI)
         self.undo_stack = []
         self.redo_stack = []
         
@@ -242,56 +239,6 @@ class MainWindow(QMainWindow):
         self.opacity_slider.valueChanged.connect(self.update_overlay_opacity)
         layout.addWidget(self.opacity_slider)
         
-        # ==================== EDITING ====================
-        section = self.create_section("EDIT")
-        layout.addWidget(section)
-        
-        self.edit_btn = self.create_button(
-            "Enable Edit",
-            self.toggle_editing,
-            color="#FF5722"
-        )
-        self.edit_btn.setEnabled(False)
-        layout.addWidget(self.edit_btn)
-        
-        layout.addWidget(QLabel("Brush Size:"))
-        brush_layout = QHBoxLayout()
-        
-        self.brush_slider = QSlider(Qt.Orientation.Horizontal)
-        self.brush_slider.setMinimum(5)
-        self.brush_slider.setMaximum(50)
-        self.brush_slider.setValue(15)
-        self.brush_slider.valueChanged.connect(self.update_brush_size)
-        brush_layout.addWidget(self.brush_slider)
-        
-        self.brush_label = QLabel("15")
-        self.brush_label.setMaximumWidth(30)
-        brush_layout.addWidget(self.brush_label)
-        layout.addLayout(brush_layout)
-        
-        tool_layout = QHBoxLayout()
-        self.paint_btn = self.create_button("Paint", lambda: self.set_tool("paint"), mini=True)
-        self.erase_btn = self.create_button("Erase", lambda: self.set_tool("erase"), mini=True)
-        tool_layout.addWidget(self.paint_btn)
-        tool_layout.addWidget(self.erase_btn)
-        layout.addLayout(tool_layout)
-        
-        layout.addWidget(QLabel("Paint Label:"))
-        self.label_spin = QSpinBox()
-        self.label_spin.setMinimum(1)
-        self.label_spin.setMaximum(20)
-        self.label_spin.setValue(1)
-        layout.addWidget(self.label_spin)
-        
-        undo_layout = QHBoxLayout()
-        self.undo_btn = self.create_button("Undo", self.undo, mini=True)
-        self.undo_btn.setEnabled(False)
-        self.redo_btn = self.create_button("Redo", self.redo, mini=True)
-        self.redo_btn.setEnabled(False)
-        undo_layout.addWidget(self.undo_btn)
-        undo_layout.addWidget(self.redo_btn)
-        layout.addLayout(undo_layout)
-        
         # ==================== CONFIDENCE THRESHOLD (YOLO only) ====================
         self.confidence_section = QLabel("YOLO Confidence Threshold")
         confidence_section_font = QFont()
@@ -299,27 +246,23 @@ class MainWindow(QMainWindow):
         confidence_section_font.setPointSize(10)
         self.confidence_section.setFont(confidence_section_font)
         self.confidence_section.setStyleSheet("padding-top: 10px; border-top: 1px solid #ccc;")
-        self.confidence_section.setVisible(False)  # Hidden until YOLO model loaded
+        self.confidence_section.setVisible(False)
         layout.addWidget(self.confidence_section)
         
-        # Confidence slider
         self.confidence_slider = QSlider(Qt.Orientation.Horizontal)
         self.confidence_slider.setMinimum(0)
         self.confidence_slider.setMaximum(100)
-        self.confidence_slider.setValue(50)  # Default 0.5
+        self.confidence_slider.setValue(50)
         self.confidence_slider.valueChanged.connect(self.update_confidence_threshold)
         self.confidence_slider.setVisible(False)
         layout.addWidget(self.confidence_slider)
         
-        # Confidence value display
         self.confidence_label = QLabel("Threshold: 0.50")
         self.confidence_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.confidence_label.setStyleSheet("font-weight: bold; color: #2196F3;")
         self.confidence_label.setVisible(False)
         layout.addWidget(self.confidence_label)
         
-        layout.addStretch()
-
         # ==================== SAVE ====================
         section = self.create_section("SAVE")
         layout.addWidget(section)
@@ -332,18 +275,9 @@ class MainWindow(QMainWindow):
         self.save_btn.setEnabled(False)
         layout.addWidget(self.save_btn)
         
-        self.export_custom_btn = self.create_button(
-            "Export As...",
-            self.save_segmentation,
-            color="#673AB7",
-            mini=True
-        )
-        self.export_custom_btn.setEnabled(False)
-        layout.addWidget(self.export_custom_btn)
-        
         layout.addStretch()
         return panel
-    
+
     def create_section(self, title: str) -> QLabel:
         """Create section header"""
         label = QLabel(title)
@@ -479,7 +413,7 @@ class MainWindow(QMainWindow):
         
         # Clear data
         self.seg_data = None
-        self.seg_confidence_data = None  # Add this line
+        self.seg_confidence_data = None
         self.current_prediction_path = None
         
         # Clear viewer
@@ -490,24 +424,14 @@ class MainWindow(QMainWindow):
         
         # Disable controls
         self.toggle_overlay_btn.setEnabled(False)
-        self.edit_btn.setEnabled(False)
         self.save_btn.setEnabled(False)
-        self.export_custom_btn.setEnabled(False)
-        self.show_confidence_controls(False)  # Hide confidence controls
-        
-        # Reset editing mode
-        if self.editing:
-            self.toggle_editing()
+        self.show_confidence_controls(False)
         
         # Clear undo/redo stacks
         self.undo_stack.clear()
         self.redo_stack.clear()
-        self.undo_btn.setEnabled(False)
-        self.redo_btn.setEnabled(False)
         
         print("✓ Segmentation cleared")
-
-# src/gui/main_window.py - Update load_model method
 
     def load_model(self):
         """Load selected model"""
@@ -856,168 +780,7 @@ class MainWindow(QMainWindow):
         """Update overlay opacity"""
         opacity = value / 100.0
         self.viewer.set_overlay_opacity(opacity)
-    
-    def toggle_editing(self):
-        """Enable/disable editing mode"""
-        self.editing = not self.editing
-        
-        if self.editing:
-            self.edit_btn.setText("Disable Edit")
-            self.edit_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #f44336;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    font-weight: bold;
-                }
-            """)
-            
-            # Connect mouse events
-            self.viewer.mouse_clicked.connect(self.on_viewer_click)
-            
-            # Save undo state
-            if self.seg_data is not None:
-                self.undo_stack.append(self.seg_data.copy())
-                self.redo_stack.clear()
-                self.undo_btn.setEnabled(True)
-            
-            QMessageBox.information(
-                self,
-                "Edit Mode Enabled",
-                "Click and drag on the image to paint/erase\n"
-                "Use brush size slider to adjust size"
-            )
-        else:
-            self.edit_btn.setText("Enable Edit")
-            self.edit_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #FF5722;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    font-weight: bold;
-                }
-            """)
-            
-            # Disconnect mouse events
-            try:
-                self.viewer.mouse_clicked.disconnect(self.on_viewer_click)
-            except:
-                pass
-    
-    def set_tool(self, tool: str):
-        """Set current editing tool"""
-        self.current_tool = tool
-        
-        if tool == "paint":
-            self.paint_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #4CAF50;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    font-weight: bold;
-                }
-            """)
-            self.erase_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #999;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                }
-            """)
-        else:
-            self.paint_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #999;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                }
-            """)
-            self.erase_btn.setStyleSheet("""
-                QPushButton {
-                    background-color: #f44336;
-                    color: white;
-                    border: none;
-                    border-radius: 4px;
-                    font-weight: bold;
-                }
-            """)
-    
-    def update_brush_size(self, value: int):
-        """Update brush size"""
-        self.brush_label.setText(str(value))
-        self.editor.set_brush_size(value)
-    
-    def on_viewer_click(self, x: int, y: int):
-        """Handle click on viewer"""
-        if not self.editing or self.seg_data is None:
-            return
-        
-        axis = self.image_handler.current_axis
-        slice_idx = self.slice_slider.value()
-        
-        # Convert to 3D coordinates based on axis
-        if axis == 0:  # Sagittal
-            z, y_3d, x_3d = slice_idx, y, x
-        elif axis == 1:  # Coronal
-            z, y_3d, x_3d = y, slice_idx, x
-        else:  # Axial
-            z, y_3d, x_3d = slice_idx, y, x
-        
-        # Check bounds
-        if not (0 <= z < self.seg_data.shape[0] and
-                0 <= y_3d < self.seg_data.shape[1] and
-                0 <= x_3d < self.seg_data.shape[2]):
-            return
-        
-        # Save to undo stack
-        self.undo_stack.append(self.seg_data.copy())
-        self.redo_stack.clear()
-        self.undo_btn.setEnabled(True)
-        self.redo_btn.setEnabled(False)
-        
-        # Apply edit
-        if self.current_tool == "paint":
-            self.seg_data = self.editor.paint_3d(
-                self.seg_data,
-                (z, y_3d, x_3d),
-                self.label_spin.value()
-            )
-        else:
-            self.seg_data = self.editor.erase_3d(
-                self.seg_data,
-                (z, y_3d, x_3d)
-            )
-        
-        # Update display
-        self.update_slice(slice_idx)
-    
-    def undo(self):
-        """Undo last edit"""
-        if len(self.undo_stack) > 0:
-            self.redo_stack.append(self.seg_data.copy())
-            self.seg_data = self.undo_stack.pop()
-            
-            self.undo_btn.setEnabled(len(self.undo_stack) > 0)
-            self.redo_btn.setEnabled(True)
-            
-            self.update_slice(self.slice_slider.value())
-    
-    def redo(self):
-        """Redo last undone edit"""
-        if len(self.redo_stack) > 0:
-            self.undo_stack.append(self.seg_data.copy())
-            self.seg_data = self.redo_stack.pop()
-            
-            self.undo_btn.setEnabled(True)
-            self.redo_btn.setEnabled(len(self.redo_stack) > 0)
-            
-            self.update_slice(self.slice_slider.value())
-    
+
     def save_segmentation(self):
         """Save edited segmentation"""
         if self.seg_data is None or self.current_prediction_path is None:

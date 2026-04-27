@@ -5,4 +5,22 @@ nnunet_preprocessed: ~/nnUNet_preprocessed
 nnunet_raw: ~/nnUNet_raw
 nnunet_results: ~/nnUNet_results
 registered_models:
-  
+  Ultrasound-Tumor-YOLO:
+    type: yolo
+    checkpoint: /mnt/bmc-lab6/Anderson_Scott/Ultrasound/Ultrasound_Model/2026-01-27/runs/segment/yolov8s-seg/weights/best.pt
+    description: ''
+    model_info:
+      model_size: m
+      device: cuda
+      task: segment
+      task_options: '[''detect'', ''segment'', ''classify'', ''pose'']'
+  uCT-LungMask:
+    type: nnunet
+    checkpoint: /mnt/bmc-lab6-archive/nnUnet_LungMaskOnly/results/Dataset001_LungMask/nnUNetTrainer__nnUNetPlans__3d_fullres/fold_0/checkpoint_best.pth
+    description: ''
+    model_info:
+      dataset: 1
+      config: 3d_fullres
+      fold: 0
+      device: cuda
+      results_dir: /mnt/bmc-lab6-archive/nnUnet_LungMaskOnly/results

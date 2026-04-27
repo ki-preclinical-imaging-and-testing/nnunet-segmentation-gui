@@ -1,52 +1,70 @@
-# 1. Create conda environment
-conda create -n nnunet-gui python=3.10 -y
-conda activate nnunet-gui
+Segmentation GUI
 
-# 2. Install dependencies
+A desktop application for running segmentation models on 3D medical images.
+What is it?
+
+This GUI lets you load 3D medical images (NIFTI format), run pre-trained nnUNet models or YOLO models to generate segmentations, and save the results. It's designed to be straightforward: load an image, select a model, run prediction, view the results.
+Installation
+1. Requirements
+
+    Python 3.10+
+    8GB RAM minimum
+    NVIDIA GPU with CUDA (optional, can use CPU)
+
+2. Create Virtual Environment
+
+Linux/macOS:
+
+bash
+python3.10 -m venv venv
+source venv/bin/activate
+
+Windows:
+
+bash
+python -m venv venv
+venv\Scripts\activate
+
+3. Install Dependencies
+
+bash
+pip install --upgrade pip setuptools wheel
 pip install -r requirements.txt
 
-# 3. Setup nnUNet paths (one-time)
-mkdir -p ~/nnUNet_raw ~/nnUNet_preprocessed ~/nnUNet_results
+4. Run
 
-# 4. Link your models directory
-# Option A: Copy models
-cp -r /path/to/your/models ~/nnUNet_models
-
-# Option B: Symbolic link (recommended for shared drives)
-ln -s /path/to/shared/models ~/nnUNet_models
-
-# 5. Or set environment variable
-export NNUNET_MODELS="/path/to/your/models"
-
-# 6. Run the GUI
+bash
 python main.py
 
+How to Use
+Loading Images
 
-1. LOAD IMAGE
-   - Click "Load Image"
-   - Select a .nii or .nii.gz file
-   - Use slider to navigate slices
-   - Click "Axis" button to change view
+Click "Load Image" or drag-and-drop a .nii.gz file onto the viewer. Use the slice slider at the bottom to scroll through slices. Click "Axis: Axial" to switch between axial, coronal, and sagittal views.
+Adding Models
 
-2. LOAD MODEL
-   - Select model from dropdown
-   - Click "Load Model"
-   - Models are auto-discovered from model_directory
+Click "Add Model..." and select your checkpoint_best.pth file. Give it a name and description. Models are saved to config.yaml and persist between sessions.
+Running Predictions
 
-3. RUN PREDICTION
-   - Click "Run Prediction"
-   - Results saved to "predictions" folder next to image
-   - Prediction appears as overlay
+Select a model from the dropdown, click "Load Model", then click "Run Prediction". A progress dialog will show until the prediction completes. Previous predictions are detected automatically.
+Viewing Results
 
-4. EDIT SEGMENTATION
-   - Click "Enable Edit"
-   - Choose Paint or Erase tool
-   - Adjust brush size with slider
-   - Select label number to paint
-   - Click and drag to edit
-   - Use Undo/Redo as needed
+The segmentation overlays on the image. Use the opacity slider to adjust transparency. Click "Toggle Overlay" to show/hide it. Click "Save Segmentation" to export the result as a NIFTI file.
 
-5. SAVE RESULTS
-   - Click "Save Segmentation"
-   - Choose save location
-   - Original spacing and affine preserved
+Project Structure
+
+css
+nnunet-segmentation-gui/
+├── main.py
+├── config.yaml
+├── requirements_simple.txt
+├── src/
+│   ├── gui/
+│   │   ├── main_window.py
+│   │   ├── viewer.py
+│   │   └── ...dialogs
+│   └── core/
+│       ├── image_handler.py
+│       ├── model_manager.py
+│       ├── predictor.py
+│       └── editor.py
+

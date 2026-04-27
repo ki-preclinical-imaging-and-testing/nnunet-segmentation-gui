@@ -1,20 +1,18 @@
 # src/gui/viewer.py
-"""Custom image viewer with dark theme, isotropic resampling, and rotation"""
+"""Custom image viewer with dark theme and rotation"""
 from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent
 
 import numpy as np
-from scipy import ndimage
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib.colors import ListedColormap
-from pathlib import Path
 
 
 class ImageViewer(QWidget):
-    """Image viewer with dark theme, isotropic resampling, and rotation support"""
+    """Image viewer with dark theme and rotation support"""
     
     mouse_clicked = pyqtSignal(int, int)
     image_dropped = pyqtSignal(str)
@@ -23,7 +21,6 @@ class ImageViewer(QWidget):
         super().__init__()
         
         self.image_data = None
-        self.image_data_original = None  # Store original for resampling
         self.seg_data = None
         self.spacing = None
         self.axis = 2
@@ -162,44 +159,10 @@ class ImageViewer(QWidget):
         
         event.ignore()
     
-    def resample_to_isotropic(self, data: np.ndarray, spacing: np.ndarray) -> np.ndarray:
-        """
-        Resample image to isotropic spacing (all dimensions equal)
-        Target spacing is the maximum spacing (to avoid upsampling too much)
-        """
-        if spacing is None or len(spacing) != 3:
-            return data
-        
-        # Get target spacing (maximum to avoid upsampling)
-        target_spacing = np.max(spacing)
-        
-        print(f"Original spacing: {spacing}")
-        print(f"Target spacing: {target_spacing}")
-        
-        # Calculate scale factors for each dimension
-        scale_factors = spacing / target_spacing
-        
-        print(f"Scale factors: {scale_factors}")
-        
-        # Calculate new shape
-        new_shape = np.round(np.array(data.shape) * scale_factors).astype(int)
-        
-        print(f"Original shape: {data.shape}")
-        print(f"Resampled shape: {new_shape}")
-        
-        # Use scipy.ndimage.zoom for resampling
-        resampled = ndimage.zoom(data, scale_factors, order=1)  # order=1 is linear interpolation
-        
-        return resampled
-    
     def set_image(self, image_data: np.ndarray, spacing: np.ndarray):
-        """Set image data and resample to isotropic"""
-        # Store original
-        self.image_data_original = image_data.copy()
+        """Set image data"""
+        self.image_data = image_data
         self.spacing = spacing
-        
-        # Resample to isotropic
-        self.image_data = self.resample_to_isotropic(image_data, spacing)
         
         # Reset transforms
         self.rotation = 0
@@ -207,12 +170,11 @@ class ImageViewer(QWidget):
         self.flip_v = False
         
         # Draw first slice
-        self.draw_image(self.image_data[:, :, 0])
+        self.draw_image(image_data[:, :, 0])
     
     def set_segmentation(self, seg_data: np.ndarray):
         """Set segmentation data"""
         self.seg_data = seg_data
-        # Don't redraw here, let the caller handle it
     
     def set_axis(self, axis: int):
         """Set viewing axis"""
@@ -277,7 +239,7 @@ class ImageViewer(QWidget):
         self.figure.patch.set_facecolor('#2b2b2b')
         
         # Display image
-        im = ax.imshow(image_slice, cmap='gray', origin='lower')
+        ax.imshow(image_slice, cmap='gray', origin='lower')
         
         # Overlay segmentation if available and visible
         if seg_slice is not None and self.overlay_visible:
@@ -340,13 +302,5 @@ class ImageViewer(QWidget):
         
         x = int(event.xdata)
         y = int(event.ydata)
-        
-        # Reverse transforms for click coordinates
-        if self.rotation == 90:
-            x, y = y, x
-        elif self.rotation == 180:
-            x, y = x, y  # No change for 180
-        elif self.rotation == 270:
-            x, y = y, x
         
         self.mouse_clicked.emit(x, y)
