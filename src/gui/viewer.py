@@ -1,40 +1,124 @@
 # src/gui/viewer.py
-"""Custom image viewer widget using matplotlib with drag/drop support"""
-from PyQt6.QtWidgets import QWidget, QVBoxLayout
+"""Custom image viewer with dark theme, isotropic resampling, and rotation"""
+from PyQt6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton
 from PyQt6.QtCore import pyqtSignal, Qt
 from PyQt6.QtGui import QDragEnterEvent, QDropEvent
 
 import numpy as np
+from scipy import ndimage
+import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 from matplotlib.colors import ListedColormap
+from pathlib import Path
 
 
 class ImageViewer(QWidget):
-    """Image viewer with overlay capability and drag/drop support"""
+    """Image viewer with dark theme, isotropic resampling, and rotation support"""
     
-    # Define signals at class level (IMPORTANT!)
-    mouse_clicked = pyqtSignal(int, int)  # x, y coordinates
-    image_dropped = pyqtSignal(str)  # file path
+    mouse_clicked = pyqtSignal(int, int)
+    image_dropped = pyqtSignal(str)
     
     def __init__(self):
         super().__init__()
         
         self.image_data = None
+        self.image_data_original = None  # Store original for resampling
         self.seg_data = None
         self.spacing = None
         self.axis = 2
         self.overlay_visible = True
         self.overlay_opacity = 0.5
         
-        # Create matplotlib figure
-        self.figure = Figure(figsize=(8, 8), dpi=100)
+        # Rotation state (90 degree increments: 0, 90, 180, 270)
+        self.rotation = 0
+        self.flip_h = False
+        self.flip_v = False
+        
+        # Create matplotlib figure with dark theme
+        self.figure = Figure(figsize=(8, 8), dpi=100, facecolor='#2b2b2b')
         self.canvas = FigureCanvas(self.figure)
         
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.canvas)
-        self.setLayout(layout)
+        # Create layout
+        main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(5)
+        
+        # Canvas
+        main_layout.addWidget(self.canvas, 1)
+        
+        # Control buttons
+        button_layout = QHBoxLayout()
+        button_layout.setContentsMargins(5, 0, 5, 5)
+        button_layout.setSpacing(5)
+        
+        # Rotation buttons
+        rot_ccw_btn = QPushButton("↺ Rotate")
+        rot_ccw_btn.setMaximumWidth(80)
+        rot_ccw_btn.clicked.connect(self.rotate_ccw)
+        rot_ccw_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #444;
+                color: white;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 5px;
+                font-size: 9px;
+            }
+        """)
+        button_layout.addWidget(rot_ccw_btn)
+        
+        # Flip buttons
+        flip_h_btn = QPushButton("⇄ Flip H")
+        flip_h_btn.setMaximumWidth(80)
+        flip_h_btn.clicked.connect(self.flip_horizontal)
+        flip_h_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #444;
+                color: white;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 5px;
+                font-size: 9px;
+            }
+        """)
+        button_layout.addWidget(flip_h_btn)
+        
+        flip_v_btn = QPushButton("⇅ Flip V")
+        flip_v_btn.setMaximumWidth(80)
+        flip_v_btn.clicked.connect(self.flip_vertical)
+        flip_v_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #444;
+                color: white;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 5px;
+                font-size: 9px;
+            }
+        """)
+        button_layout.addWidget(flip_v_btn)
+        
+        # Reset button
+        reset_btn = QPushButton("Reset")
+        reset_btn.setMaximumWidth(60)
+        reset_btn.clicked.connect(self.reset_transforms)
+        reset_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #444;
+                color: white;
+                border: 1px solid #555;
+                border-radius: 3px;
+                padding: 5px;
+                font-size: 9px;
+            }
+        """)
+        button_layout.addWidget(reset_btn)
+        
+        button_layout.addStretch()
+        main_layout.addLayout(button_layout)
+        
+        self.setLayout(main_layout)
         
         # Connect mouse events
         self.canvas.mpl_connect('button_press_event', self.on_click)
@@ -43,37 +127,33 @@ class ImageViewer(QWidget):
         self.setAcceptDrops(True)
     
     def dragEnterEvent(self, event: QDragEnterEvent):
-        """Handle drag enter - show visual feedback"""
+        """Handle drag enter"""
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             for url in urls:
                 file_path = url.toLocalFile()
                 if file_path.endswith(('.nii', '.nii.gz')):
                     event.acceptProposedAction()
-                    # Visual feedback
                     self.setStyleSheet(
-                        "background-color: #e3f2fd; "
+                        "background-color: #444444; "
                         "border: 3px dashed #2196F3; "
                         "border-radius: 5px;"
                     )
                     return
-        
         event.ignore()
     
     def dragLeaveEvent(self, event):
-        """Handle drag leave - reset background"""
+        """Handle drag leave"""
         self.setStyleSheet("")
     
     def dropEvent(self, event: QDropEvent):
-        """Handle drop - emit signal with file path"""
-        self.setStyleSheet("")  # Reset background
+        """Handle drop"""
+        self.setStyleSheet("")
         
         if event.mimeData().hasUrls():
             urls = event.mimeData().urls()
             for url in urls:
                 file_path = url.toLocalFile()
-                
-                # Only accept NIFTI files
                 if file_path.endswith(('.nii', '.nii.gz')):
                     print(f"✓ Image dropped: {file_path}")
                     self.image_dropped.emit(file_path)
@@ -82,35 +162,128 @@ class ImageViewer(QWidget):
         
         event.ignore()
     
+    def resample_to_isotropic(self, data: np.ndarray, spacing: np.ndarray) -> np.ndarray:
+        """
+        Resample image to isotropic spacing (all dimensions equal)
+        Target spacing is the maximum spacing (to avoid upsampling too much)
+        """
+        if spacing is None or len(spacing) != 3:
+            return data
+        
+        # Get target spacing (maximum to avoid upsampling)
+        target_spacing = np.max(spacing)
+        
+        print(f"Original spacing: {spacing}")
+        print(f"Target spacing: {target_spacing}")
+        
+        # Calculate scale factors for each dimension
+        scale_factors = spacing / target_spacing
+        
+        print(f"Scale factors: {scale_factors}")
+        
+        # Calculate new shape
+        new_shape = np.round(np.array(data.shape) * scale_factors).astype(int)
+        
+        print(f"Original shape: {data.shape}")
+        print(f"Resampled shape: {new_shape}")
+        
+        # Use scipy.ndimage.zoom for resampling
+        resampled = ndimage.zoom(data, scale_factors, order=1)  # order=1 is linear interpolation
+        
+        return resampled
+    
     def set_image(self, image_data: np.ndarray, spacing: np.ndarray):
-        """Set image data and physical spacing"""
-        self.image_data = image_data
+        """Set image data and resample to isotropic"""
+        # Store original
+        self.image_data_original = image_data.copy()
         self.spacing = spacing
-        self.draw_image(image_data[:, :, 0])
+        
+        # Resample to isotropic
+        self.image_data = self.resample_to_isotropic(image_data, spacing)
+        
+        # Reset transforms
+        self.rotation = 0
+        self.flip_h = False
+        self.flip_v = False
+        
+        # Draw first slice
+        self.draw_image(self.image_data[:, :, 0])
     
     def set_segmentation(self, seg_data: np.ndarray):
         """Set segmentation data"""
         self.seg_data = seg_data
-        self.draw_image(self.image_data[:, :, 0], self.seg_data[:, :, 0])
+        # Don't redraw here, let the caller handle it
     
     def set_axis(self, axis: int):
         """Set viewing axis"""
         self.axis = axis
     
+    def rotate_ccw(self):
+        """Rotate view counter-clockwise by 90 degrees"""
+        self.rotation = (self.rotation + 90) % 360
+        print(f"Image rotated to {self.rotation}°")
+    
+    def flip_horizontal(self):
+        """Flip view horizontally"""
+        self.flip_h = not self.flip_h
+        print(f"Horizontal flip: {self.flip_h}")
+    
+    def flip_vertical(self):
+        """Flip view vertically"""
+        self.flip_v = not self.flip_v
+        print(f"Vertical flip: {self.flip_v}")
+    
+    def reset_transforms(self):
+        """Reset all rotations and flips"""
+        self.rotation = 0
+        self.flip_h = False
+        self.flip_v = False
+        print("Transforms reset")
+    
+    def apply_transforms(self, data: np.ndarray) -> np.ndarray:
+        """Apply rotation and flip transforms to 2D slice"""
+        result = data.copy()
+        
+        # Apply flips
+        if self.flip_h:
+            result = np.fliplr(result)
+        if self.flip_v:
+            result = np.flipud(result)
+        
+        # Apply rotation
+        if self.rotation == 90:
+            result = np.rot90(result, k=1)
+        elif self.rotation == 180:
+            result = np.rot90(result, k=2)
+        elif self.rotation == 270:
+            result = np.rot90(result, k=3)
+        
+        return result
+    
     def update_slice(self, image_slice: np.ndarray, seg_slice: np.ndarray = None):
         """Update displayed slice"""
         self.draw_image(image_slice, seg_slice)
-
+    
     def draw_image(self, image_slice: np.ndarray, seg_slice: np.ndarray = None):
         """Draw image with optional overlay"""
         self.figure.clear()
         ax = self.figure.add_subplot(111)
         
+        # Apply transforms
+        image_slice = self.apply_transforms(image_slice)
+        
+        # Set dark background
+        ax.set_facecolor('#2b2b2b')
+        self.figure.patch.set_facecolor('#2b2b2b')
+        
         # Display image
-        ax.imshow(image_slice, cmap='gray', origin='lower')
+        im = ax.imshow(image_slice, cmap='gray', origin='lower')
         
         # Overlay segmentation if available and visible
         if seg_slice is not None and self.overlay_visible:
+            # Apply same transforms to segmentation
+            seg_slice = self.apply_transforms(seg_slice)
+            
             # Ensure seg_slice is integer
             seg_slice = np.asarray(seg_slice, dtype=np.int32)
             
@@ -141,17 +314,22 @@ class ImageViewer(QWidget):
                 vmax=num_labels - 1
             )
         
-        ax.set_title('Image Stack (Drag & Drop Images Here)')
+        # Set dark text color
+        ax.set_title('Image Stack (Drag & Drop Images Here)', color='white', fontsize=10)
+        ax.tick_params(colors='white')
+        
+        # Remove axis labels for cleaner look
         ax.axis('off')
         
         self.canvas.draw()
+    
     def toggle_overlay(self):
         """Toggle segmentation overlay visibility"""
         self.overlay_visible = not self.overlay_visible
         self.canvas.draw()
     
     def set_overlay_opacity(self, opacity: float):
-        """Set overlay opacity (0-1)"""
+        """Set overlay opacity"""
         self.overlay_opacity = np.clip(opacity, 0, 1)
         self.canvas.draw()
     
@@ -162,5 +340,13 @@ class ImageViewer(QWidget):
         
         x = int(event.xdata)
         y = int(event.ydata)
+        
+        # Reverse transforms for click coordinates
+        if self.rotation == 90:
+            x, y = y, x
+        elif self.rotation == 180:
+            x, y = x, y  # No change for 180
+        elif self.rotation == 270:
+            x, y = y, x
         
         self.mouse_clicked.emit(x, y)

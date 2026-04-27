@@ -158,37 +158,6 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.slice_label)
         
         return widget
-    
-    def on_image_dropped(self, file_path: str):
-        """Handle image dropped on viewer"""
-        try:
-            print(f"Loading dropped image: {file_path}")
-
-            # Clear previous segmentation
-            self.clear_segmentation()
-            
-            # Load image
-            data, spacing, affine = self.image_handler.load_image(file_path)
-            self.current_image_path = file_path
-            
-            # Update viewer
-            self.viewer.set_image(data, spacing)
-            self.slice_slider.setMaximum(data.shape[2] - 1)
-            self.update_slice(0)
-            
-            # Update label
-            name = Path(file_path).name
-            shape = " × ".join(map(str, data.shape))
-            self.image_label.setText(f"{name}\n{shape}")
-            
-            # Enable prediction if model is loaded
-            if self.predictor:
-                self.predict_btn.setEnabled(True)
-            
-            print(f"✓ Loaded: {name}")
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to load image:\n{str(e)}")
 
     def create_left_panel(self) -> QWidget:
         """Create left control panel (narrower, scrollable)"""
@@ -428,6 +397,7 @@ class MainWindow(QMainWindow):
         else:
             self.model_combo.addItem("No models found")
     
+# src/gui/main_window.py - Update load_image and on_image_dropped
 
     def load_image(self):
         """Load NIFTI image"""
@@ -443,11 +413,14 @@ class MainWindow(QMainWindow):
                 # Clear previous segmentation
                 self.clear_segmentation()
                 
+                # Reset viewer transforms
+                self.viewer.reset_transforms()
+                
                 # Load new image
                 data, spacing, affine = self.image_handler.load_image(file_path)
                 self.current_image_path = file_path
                 
-                # Update viewer
+                # Update viewer (will resample to isotropic)
                 self.viewer.set_image(data, spacing)
                 self.slice_slider.setMaximum(data.shape[2] - 1)
                 self.update_slice(0)
@@ -465,8 +438,40 @@ class MainWindow(QMainWindow):
                 
             except Exception as e:
                 QMessageBox.critical(self, "Error", f"Failed to load image:\n{str(e)}")
-
-    # src/gui/main_window.py - Update clear_segmentation method
+    
+    def on_image_dropped(self, file_path: str):
+        """Handle image dropped on viewer"""
+        try:
+            print(f"Loading dropped image: {file_path}")
+            
+            # Clear previous segmentation
+            self.clear_segmentation()
+            
+            # Reset viewer transforms
+            self.viewer.reset_transforms()
+            
+            # Load image
+            data, spacing, affine = self.image_handler.load_image(file_path)
+            self.current_image_path = file_path
+            
+            # Update viewer (will resample to isotropic)
+            self.viewer.set_image(data, spacing)
+            self.slice_slider.setMaximum(data.shape[2] - 1)
+            self.update_slice(0)
+            
+            # Update label
+            name = Path(file_path).name
+            shape = " × ".join(map(str, data.shape))
+            self.image_label.setText(f"{name}\n{shape}")
+            
+            # Enable prediction if model is loaded
+            if self.predictor:
+                self.predict_btn.setEnabled(True)
+            
+            print(f"✓ Loaded: {name}")
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Error", f"Failed to load image:\n{str(e)}")
 
     def clear_segmentation(self):
         """Clear current segmentation and disable related controls"""
@@ -792,13 +797,15 @@ class MainWindow(QMainWindow):
             self.slice_slider.setMaximum(max_slices - 1)
             self.slice_slider.setValue(max_slices//2)
             self.update_slice(0)
-    
+
     def update_slice(self, idx: int):
         """Update displayed slice"""
         if self.image_handler.image_data is None:
             return
         
         axis = self.image_handler.current_axis
+        
+        # Get slice from RESAMPLED (isotropic) data
         slice_data = self.image_handler.get_slice(idx, axis)
         
         # Update segmentation slice if available
