@@ -574,25 +574,6 @@ class MainWindow(QMainWindow):
             pred_data = np.nan_to_num(pred_data, nan=0.0)
             self.seg_data = pred_data.astype(np.int32)
             
-            # Try to load confidence scores if available
-            self.seg_confidence_data = None
-            conf_path = pred_path.parent / pred_path.name.replace('_seg.nii.gz', '_confidence.nii.gz')
-            
-            if conf_path.exists():
-                print(f"Loading confidence scores: {conf_path.name}")
-                conf_img = nib.load(str(conf_path))
-                self.seg_confidence_data = conf_img.get_fdata().astype(np.float32)
-                
-                # Show confidence controls if YOLO prediction
-                if self.predictor and self.predictor.model_type == 'yolo':
-                    self.show_confidence_controls(True)
-                    self.confidence_slider.setValue(50)  # Reset to 0.5
-                    print(f"Confidence range: {self.seg_confidence_data.min():.3f} - {self.seg_confidence_data.max():.3f}")
-                else:
-                    self.show_confidence_controls(False)
-            else:
-                self.show_confidence_controls(False)
-            
             # Verify data
             print(f"  Shape: {self.seg_data.shape}")
             print(f"  Dtype: {self.seg_data.dtype}")
@@ -603,7 +584,6 @@ class MainWindow(QMainWindow):
             # Display
             self.viewer.set_segmentation(self.seg_data)
             self.toggle_overlay_btn.setEnabled(True)
-            self.edit_btn.setEnabled(True)
             self.save_btn.setEnabled(True)
             
             # Update current slice display

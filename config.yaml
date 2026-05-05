@@ -24,3 +24,22 @@ registered_models:
       fold: 0
       device: cuda
       results_dir: /mnt/bmc-lab6-archive/nnUnet_LungMaskOnly/results
+  Ultrasound Tumor Model:
+    type: nnunet
+    checkpoint: /mnt/bmc-lab6/Anderson_Scott/Ultrasound/nnUNet_Model/April27_Results/Dataset001_Abdominal/nnUNetTrainer__nnUNetPlans__3d_fullres/fold_1/checkpoint_best.pth
+    description: ''
+    model_info:
+      dataset: 1
+      config: 3d_fullres
+      fold: 1
+      device: cuda
+      results_dir: /mnt/bmc-lab6/Anderson_Scott/Ultrasound/nnUNet_Model/April27_Results
+  May1-YOLO tumor seg:
+    type: yolo
+    checkpoint: /mnt/bmc-lab6/Anderson_Scott/Ultrasound/Ultrasound_Model/2026-05-01/runs/segment/train6/weights/best.pt
+    description: ''
+    model_info:
+      model_size: m
+      device: cuda
+      task: segment
+      task_options: '[''detect'', ''segment'', ''classify'', ''pose'']'
